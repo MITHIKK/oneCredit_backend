@@ -28,20 +28,43 @@ app.use((req, res, next) => {
   next();
 });
 
-const DB_NAME = process.env.DB_NAME || 'oneCredit';
-const MONGODB_URI = process.env.MONGODB_URI || `mongodb+srv://mkmithik2005:Mithik2005@cluster1.kdkc6ne.mongodb.net/oneCredit?retryWrites=true&w=majority&appName=Cluster1`;
-console.log(`🔗 Connecting to database: ${DB_NAME}`);
+// Debug environment variables
+console.log('🔍 Environment Variables Debug:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
+console.log('DB_NAME:', process.env.DB_NAME);
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+const DB_NAME = process.env.DB_NAME || 'oneCredit';
+
+// Multiple fallback levels for MongoDB URI
+let MONGODB_URI;
+if (process.env.MONGODB_URI) {
+  MONGODB_URI = process.env.MONGODB_URI;
+} else if (process.env.NODE_ENV === 'production') {
+  // Production fallback - Atlas URI
+  MONGODB_URI = 'mongodb+srv://mkmithik2005:Mithik2005@cluster1.kdkc6ne.mongodb.net/oneCredit?retryWrites=true&w=majority&appName=Cluster1';
+} else {
+  // Development fallback - Local MongoDB
+  MONGODB_URI = 'mongodb://localhost:27017/oneCredit';
+}
+
+console.log(`🔗 Connecting to database: ${DB_NAME}`);
+console.log('🔗 MongoDB URI:', MONGODB_URI.includes('mongodb+srv') ? 'Using Atlas' : 'Using Local');
+
+// Connect without deprecated options
+mongoose.connect(MONGODB_URI);
 
 const db = mongoose.connection;
-db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+db.on('error', (error) => {
+  console.error('❌ MongoDB connection error:', error.message);
+  console.error('🔗 Attempted URI:', MONGODB_URI.includes('mongodb+srv') ? 'Atlas URI (hidden for security)' : MONGODB_URI);
+  // Don't exit process, let Render handle restarts
+});
+
 db.once('open', () => {
-  console.log('✅ Connected to MongoDB Atlas');
-  console.log(`📊 Database: ${MONGODB_URI}`);
+  console.log('✅ Connected to MongoDB Atlas successfully!');
+  console.log(`📊 Database: ${mongoose.connection.db.databaseName}`);
+  console.log(`🌍 Host: ${mongoose.connection.host}`);
 });
 
 // Define schemas since we don't have separate model files
@@ -181,6 +204,7 @@ app.post('/api/login', async (req, res) => {
         
         const hashedPassword = await bcrypt.hash(password, 10);
         user = await User.create({
+          name: username.split('@')[0] + ' User',
           firstName: username.split('@')[0],
           lastName: 'User',
           email: username,
@@ -261,6 +285,7 @@ app.post('/api/signup', async (req, res) => {
     const lastName = lastNameParts.join(' ') || 'User';
     
     const user = await User.create({
+      name: name,
       firstName,
       lastName,
       email,
@@ -304,8 +329,20 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/trips/book', async (req, res) => {
   try {
     const { userId, from, to, date, acType, travelers, cost } = req.body;
+    console.log('🚌 New trip booking request:', { userId, from, to, date });
     
-    const trip = await Trip.create({
+    let user = null;
+    if (userId && userId !== 'owner-001') {
+      try {
+        user = await User.findById(userId);
+      } catch (err) {
+        console.log('⚠️ User not found, creating trip with provided data');
+      }
+    }
+    
+    // Create trip with dual format support
+    const tripData = {
+      // New format fields
       title: `Trip from ${from} to ${to}`,
       description: `Bus trip with ${acType} accommodation`,
       user: userId,
@@ -326,18 +363,33 @@ app.post('/api/trips/book', async (req, res) => {
           transportation: cost
         }
       },
-      notes: `AC Type: ${acType}, From: ${from}`
-    });
+      notes: `AC Type: ${acType}, From: ${from}`,
+      // Old format fields for compatibility
+      customerId: userId,
+      customerName: user ? user.name : req.body.customerName || 'Customer',
+      customerEmail: user ? user.email : req.body.customerEmail || '',
+      customerPhone: user ? user.phone : req.body.customerPhone || '',
+      from,
+      to,
+      date: new Date(date),
+      timeSlot: req.body.timeSlot || '09:00 AM',
+      acType: acType || 'Non-AC',
+      cost: cost || 0
+    };
     
+    const savedTrip = await Trip.create(tripData);
+    
+    console.log('✅ Trip booked successfully:', savedTrip._id);
     res.json({
       success: true,
-      trip
+      message: 'Trip booked successfully',
+      trip: savedTrip
     });
   } catch (error) {
-    console.error('Booking error:', error);
+    console.error('❌ Booking error:', error);
     res.status(500).json({
       success: false,
-      error: 'Error creating trip booking'
+      error: error.message || 'Error creating trip booking'
     });
   }
 });
