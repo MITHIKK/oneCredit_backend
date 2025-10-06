@@ -353,7 +353,7 @@ app.post('/api/trips/book', async (req, res) => {
       },
       startDate: new Date(date),
       endDate: new Date(date),
-      status: 'draft', 
+      status: 'pending',
       tripType: 'group',
       travelers: travelers || [],
       budget: {
@@ -401,9 +401,9 @@ app.get('/api/trips/customer/:userId', async (req, res) => {
     const trips = await Trip.find({ user: userId })
       .sort({ createdAt: -1 });
     
-    const pendingTrips = trips.filter(t => t.status === 'draft' || t.status === 'planned');
-    const approvedTrips = trips.filter(t => t.status === 'booked');
-    const completedTrips = trips.filter(t => t.status === 'completed');
+    const pendingTrips = trips.filter(t => t.status === 'pending' || t.status === 'draft');
+    const approvedTrips = trips.filter(t => t.status === 'approved');
+    const completedTrips = trips.filter(t => t.status === 'completed' || t.status === 'confirmed');
     
     res.json({
       success: true,
@@ -726,6 +726,82 @@ app.post('/api/trips/:tripId/payment', async (req, res) => {
   } catch (error) {
     console.error('❌ Payment processing error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Add missing approve endpoint
+app.put('/api/trips/:tripId/approve', async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    console.log('✅ Approving trip:', tripId);
+    
+    const trip = await Trip.findByIdAndUpdate(
+      tripId,
+      { 
+        status: 'approved',
+        approvedAt: new Date()
+      },
+      { new: true }
+    );
+    
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        error: 'Trip not found'
+      });
+    }
+    
+    console.log('✅ Trip approved successfully:', trip._id);
+    res.json({
+      success: true,
+      message: 'Trip approved successfully',
+      trip
+    });
+  } catch (error) {
+    console.error('❌ Error approving trip:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Add reject trip endpoint
+app.put('/api/trips/:tripId/reject', async (req, res) => {
+  try {
+    const { tripId } = req.params;
+    const { reason } = req.body;
+    console.log('❌ Rejecting trip:', tripId, 'Reason:', reason);
+    
+    const trip = await Trip.findByIdAndUpdate(
+      tripId,
+      { 
+        status: 'cancelled',
+        rejectedAt: new Date(),
+        rejectionReason: reason || 'Not available for selected dates'
+      },
+      { new: true }
+    );
+    
+    if (!trip) {
+      return res.status(404).json({
+        success: false,
+        error: 'Trip not found'
+      });
+    }
+    
+    console.log('❌ Trip rejected successfully:', trip._id);
+    res.json({
+      success: true,
+      message: 'Trip rejected successfully',
+      trip
+    });
+  } catch (error) {
+    console.error('❌ Error rejecting trip:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
